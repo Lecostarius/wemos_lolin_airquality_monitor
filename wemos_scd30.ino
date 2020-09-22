@@ -86,10 +86,10 @@
 //////////////////////////////////////////////////////////////////////////
 //#define SCD30WIRE Wire
 
-// for the MHZ19:
-#define RX_PIN 13                                          // Rx pin which the MHZ19 Tx pin is attached to
-#define TX_PIN 15                                          // Tx pin which the MHZ19 Rx pin is attached to
-#define BAUDRATE 9600                                      // Device to MH-Z19 Serial baudrate (should not be changed)
+// for the PMS7003:
+#define RX_PIN 25                                         // Rx pin which the PMS7003 Tx pin is attached to
+#define TX_PIN 26                                         // Tx pin which the PMS7003 Rx pin is attached to
+#define BAUDRATE 9600                                     // Device to PMS7003 Serial baudrate (should not be changed)
 #define NO_GLOBAL_SOFTWIRE
 
 // for the SCD30:
@@ -106,9 +106,12 @@
 
 SCD30 airSensor;
 SSD1306 display(0x3c, 5, 4);
-//MHZ19 myMHZ19;                                             // Constructor for library
-//HardwareSerial mySerial(1);
+HardwareSerial mySerial(1);
 SoftWire swi;
+
+int pm1=0, pm25=0, pm10=0;
+int CO2, TEMP, HYG;
+
 
 void setup()
 {
@@ -116,62 +119,95 @@ void setup()
   Serial.println("SCD30 Example 1");
   display.init();
   display.clear();
-  display.setFont(ArialMT_Plain_16);                      // 8, 16, 24 exist
+  display.setFont(ArialMT_Plain_16);                      // 10, 16, 24 exist
   display.drawString(10,10,"Lecostarius");
   display.display();
 
-  //SCD30WIRE.begin(); // default 21, 22
-  //twi.begin(2, 14);
-  //SoftWire.begin(2, 14); // sda, scl 
+  
   swi.begin(13,15);
   
   airSensor.setDebug(scd_debug);
 
   //This will cause readings to occur every two seconds
-  if (! airSensor.begin(swi))
-  {
+  if (! airSensor.begin(swi))  {
     Serial.println(F("The SCD30 did not respond. Please check wiring."));
     while (1);
   }
 
   // display device info
   DeviceInfo();
-  
+  mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
 }
 
 void loop() {
-  char puf[22];
+  char puf[128];
+  uint8_t rxbuffer[34];
+  int i;
+  
+  if (readPMS7003(rxbuffer) == 32) {
+    if (rxbuffer[0] == 66 && rxbuffer[1] == 77) {
+      pm1 = rxbuffer[10] * 256 + rxbuffer[11];
+      pm25 = rxbuffer[12] * 256 + rxbuffer[13];
+      pm10 = rxbuffer[14] * 256 + rxbuffer[15];
+      //Serial.print(pm1);
+      //Serial.print(",");
+      //Serial.print(pm25);
+      //Serial.print(",");
+      //Serial.print(pm10);
+      //Serial.println();
+    }
+  }
 
-  if (airSensor.dataAvailable())
-  {
-    int CO2, TEMP, HYG;
+  if (airSensor.dataAvailable())  {
     CO2 = airSensor.getCO2();
+    TEMP = airSensor.getTemperature();
+    HYG = airSensor.getHumidity();
+    
     Serial.print("co2(ppm):");
     Serial.print(CO2);
-    sprintf(puf,"CO2: %d ppm",CO2);
+    sprintf(puf,"%d / %d",CO2, pm10);
     display.clear();
+    display.setFont(ArialMT_Plain_24);
     display.drawString(1,0,puf);
+    display.setFont(ArialMT_Plain_10);
+    display.drawString(1,24,"ppm CO2 /    PM10");
     
-    TEMP = airSensor.getTemperature();
     Serial.print(" temp(C):");
     Serial.print(TEMP, 1);
-    sprintf(puf,"T  : %d C", TEMP);
-    display.drawString(1,18,puf);
+    Serial.print(" PM1/2.5/10:");
+    Serial.print(pm1); Serial.print("/");Serial.print(pm25);Serial.print("/"); Serial.print(pm10);
+    sprintf(puf,"PM1/2.5/10:%d/%d/%d", pm1, pm25,pm10);
+    
+    display.drawString(1,40,puf);
+    //display.setFont(ArialMT_Plain_16);
 
-    HYG = airSensor.getHumidity();
+    
     Serial.print(" humidity(%):");
     Serial.print(HYG, 1);
-    sprintf(puf,"HYG: %d %%rel", HYG);
-    display.drawString(1,36,puf);
+    sprintf(puf,"%d %%relF, %d C", HYG, TEMP);
+    display.drawString(1,50,puf);
     display.display();
     
     Serial.println();
-    
-  }
-  else
-    Serial.println("No data");
 
-  delay(2000);
+    
+  } else {
+    // Serial.println("No data");
+  }
+
+
+  delay(250);
+}
+
+int readPMS7003(uint8_t *p) {
+  int i=0;
+  uint8_t byteRead;
+  while (mySerial.available() > 0) {
+    byteRead = mySerial.read();
+    if (i < 33) { p[i] = byteRead; }
+    i=i+1;
+  }
+  return(i);
 }
 
 void DeviceInfo()
