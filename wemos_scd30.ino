@@ -1,4 +1,59 @@
 /*
+ --------------------------------------------------------------------------------------------------------
+ by Lecostarius
+  Air quality monitoring with a Wemos Lolin with OLED (ESP32 WROOM w/ a 128x64 OLED driven by SSD1306)
+
+  Three sensors are attached:
+    - a SCD30 from Sensirion for CO2, Temperature, Humidity,
+    - a PMS7003 particle sensor (give PM1, PM2.5, PM10 fine dust),
+    - a MiCS 6814 triple chemical sensor (for NH3, CO, NO2), with breakout from Seeed
+  One display is attached:
+    - a 128x64 OLED with a SSD1306 driver chip
+
+    The SCD30 and the MiCS6814 and the display are all three connected using I2C. The respective 
+    adresses are 0x04 for the MiCS6814 Seeed breakout, 0x61 for the SCD30, and 0x3c for the display.
+    However, the requirements of the three I2C bus slaves are very different. 
+    The display is hard-connected to GPIO 4 (SCL) and GPIO 5 (SDA). It needs to run at the highest
+     possible speed.
+    The SCD30, on the contrary, has an absolute maximum I2C speed of 100 kHz and uses clock stretching
+    a lot. According to the datasheet, it can delay the transfer by up to 150 ms which amounts to 7 Hz.
+    This happens rarely, but the fast display I2C speed and the extreme bus usage of the SCD30 do not
+    play well together. So I decided to put the SCD30 on another I2C bus (which is software emulated,
+    because the ESP32 does not support clock stretching of 150 ms...)
+
+    The MiCS6814 Seeed breakout board has no documentation about its I2C limitations. Likely it does
+    not support the very fast I2C that the display runs, so it can be put on the same hardware pins as the
+    SCD30. The problem with it is that the library provided by Seeed uses the "Wire" object throughout to 
+    communicate with the uC they put on their breakout board, and the "Wire" object is already used by
+    the SSD1306 display driver software. I still need to find a solution for that, other than rewriting 
+    the entire Seeed library "MutichannelGasSensor.cpp|h"
+    
+    The SCD30 board has pull-up resistors (pretty high ones, but the speed is low, so it is OK)
+    so no external components are required for neither the SCD30 nor the MiCS6814 which is on the same
+    two pins. 
+
+    The PMS7003 uses a serial connection and regularly broadcasts its data over serial.
+    We use the hardware serial #1 of the ESP32 for that.
+
+    The code for the SCD30 is the code from paulvha. Slight modifications were required to allow
+    running the I2C not from the standard pins.
+    The SoftWire library is also taken from paulvha; it has a long version history dating back to 
+    an original Arduino version of 2006.
+    The code for the MiCS 6814 is taken almost literally from Seeed (MutichannelGasSensor). Since this
+    code includes <Wire.h> but we can not do it (we need to use SoftWire) the Seeed code had to be
+    changed by commenting out the #include <Wire.h>. This is the only required change. The Wire object
+    is instead instantiated by an include in paulvha_SCD30.h.
+
+    The code for the PMS7003 is trivial and written by myself.
+
+    The code for the SSD1306 is the library written by Fabrice Weinberg and ThingPulse available via the
+    Arduino library facility: "ESP8266 and ESP32 OLED driver for SSD1306 displays"
+    
+    All copyright texts are left in the respective files, including this one (follows)
+    Any code added by me to this project is freeware. Use for whatever purpose.
+  ------------------------------------------------------------------------------------------------------
+
+
   Reading CO2, humidity and temperature from the SCD30
   By: Nathan Seidle
   SparkFun Electronics
@@ -90,19 +145,18 @@
 #define RX_PIN 25                                         // Rx pin which the PMS7003 Tx pin is attached to
 #define TX_PIN 26                                         // Tx pin which the PMS7003 Rx pin is attached to
 #define BAUDRATE 9600                                     // Device to PMS7003 Serial baudrate (should not be changed)
-#define NO_GLOBAL_SOFTWIRE
 
-// for the SCD30:
+// for the SCD30 and MiCS6814:
+
 #define SDA_PIN 2
 #define SCL_PIN 14
 
 #include <Arduino.h>
-//#include "MHZ19.h"
 //#include <SoftwareSerial.h>                                // Remove if using HardwareSerial or Arduino package without SoftwareSerial support
 
-
-#include "paulvha_SCD30.h"
-#include "SSD1306.h"
+#define NO_GLOBAL_SOFTWIRE
+#include "paulvha_SCD30.h"  // this includes SoftWire.h but with NO_GLOBAL_SOFTWIRE will not create a "Wire" object
+#include "SSD1306.h"        // this might include Wire.h
 
 SCD30 airSensor;
 SSD1306 display(0x3c, 5, 4);
