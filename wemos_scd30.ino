@@ -136,11 +136,6 @@
 //////////////////////////////////////////////////////////////////////////
 #define scd_debug 0
 
-//////////////////////////////////////////////////////////////////////////
-//                SELECT THE WIRE INTERFACE                             //
-//////////////////////////////////////////////////////////////////////////
-//#define SCD30WIRE Wire
-
 // for the PMS7003:
 #define RX_PIN 25                                         // Rx pin which the PMS7003 Tx pin is attached to
 #define TX_PIN 26                                         // Tx pin which the PMS7003 Rx pin is attached to
@@ -152,14 +147,16 @@
 #define SCL_PIN 14
 
 #include <Arduino.h>
-//#include <SoftwareSerial.h>                                // Remove if using HardwareSerial or Arduino package without SoftwareSerial support
 
 #define NO_GLOBAL_SOFTWIRE
 #include "paulvha_SCD30.h"  // this includes SoftWire.h but with NO_GLOBAL_SOFTWIRE will not create a "Wire" object
 #include "SSD1306.h"        // this might include Wire.h
+#include "Mics6814.h"
 
 SCD30 airSensor;
 SSD1306 display(0x3c, 5, 4);
+Mics6814 mics;
+
 HardwareSerial mySerial(1);
 SoftWire swi;
 
@@ -191,6 +188,10 @@ void setup()
   // display device info
   DeviceInfo();
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
+  mics.begin(0x04);
+  Serial.print("mics6814 version: ");
+  Serial.println(mics.getVersion());
+  mics.ledOn();
 }
 
 void loop() {
@@ -249,7 +250,9 @@ void loop() {
     // Serial.println("No data");
   }
 
-
+  mics.ledOn();
+  delay(250);
+  mics.ledOff();
   delay(250);
 }
 
