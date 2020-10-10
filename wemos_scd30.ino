@@ -55,6 +55,14 @@
     
     All copyright texts are left in the respective files, including this one (follows)
     Any code added by me to this project is freeware. Feel free to use for whatever purpose.
+
+    Connecting the Hardware
+
+    As for power, the PMS7003 runs on 5 V power (the fan needs 5V), the SCD30 and the Mics6814 breakout both
+    run either on 3.3V or 5 V. The Mics6814 draws a maximum of 150mW of power even when heating, which is less
+    than 50 mA, so I think it can safely be connected to the 3.3V power pin of the Wemos Lolin board.
+    The entire board - with sensors attached - seems to consume between 120mA and 180mA of current at 5V USB
+    supply. For a 10000mAh power bank that translates into roughly 2 days of continuous operation.
   ------------------------------------------------------------------------------------------------------
 
 
@@ -144,13 +152,24 @@
 
 // for the PMS7003:
 #define RX_PIN 25                                         // Rx pin which the PMS7003 Tx pin is attached to
-#define TX_PIN 26                                         // Tx pin which the PMS7003 Rx pin is attached to
+#define TX_PIN 0                                          // not used by us, we only receive
 #define BAUDRATE 9600                                     // Device to PMS7003 Serial baudrate (should not be changed)
 
 // for the SCD30 and MiCS6814:
 
 #define SDA_PIN 13
 #define SCL_PIN 15
+
+// for the Buzzer:
+#define BUZZERPIN 16
+
+// for switching on/off the PMS7003 (to increase its lifetime):
+#define PMS7003PIN 2
+
+// calibration input pin: if this is pulled low, calibrate the MiCS6814:
+#define CALIBRATIONPIN 26 
+
+
 
 #include <Arduino.h>
 
@@ -179,6 +198,12 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Air Quality Sensor v1.0");
 
+  pinMode(CALIBRATIONPIN, INPUT_PULLUP);
+  pinMode(BUZZERPIN, OUTPUT);
+  pinMode(PMS7003PIN, OUTPUT);
+  digitalWrite(BUZZERPIN, LOW);
+  digitalWrite(PMS7003PIN, HIGH);
+  
   // set up sequence of the display. Uses I2C connection over pins 4,5 and the Wire object.
   display.init();
   display.clear();
@@ -259,8 +284,31 @@ void loop() {
       displayChem(concentrationNH3, concentrationCO, concentrationAlc, concentrationNO2);
     }
   }
-  
 
+  // check whether calibration of MiCS6814 is requested (by pulling the CALIBRATIONPIN to LOW
+  if (digitalRead(CALIBRATIONPIN) == LOW) {
+    displayCalibMessage1();
+    delay(300); // Taste entprellen
+    while (digitalRead(CALIBRATIONPIN) == LOW) {
+      delay(100); // wait for pin release, forever
+    }
+    displayCalibMessage2();
+    //mics.doCalibrate();
+    delay(8000); // wait 8 seconds
+    digitalWrite(BUZZERPIN,HIGH); delay(200); digitalWrite(BUZZERPIN,LOW);
+    delay(200);
+    digitalWrite(BUZZERPIN,HIGH); delay(200); digitalWrite(BUZZERPIN,LOW);
+    delay(200);
+    digitalWrite(BUZZERPIN,HIGH); delay(200); digitalWrite(BUZZERPIN,LOW);
+  } 
+
+  
+  if (displayCtr == 4) {
+    //digitalWrite(BUZZERPIN, HIGH);
+  } else {
+    //digitalWrite(BUZZERPIN, LOW);
+  }
+  
   delay(500); // all our sensors are slow. No point in reading them too often.
   /* 
    *  The PMS7003 sends its data in automatic mode with a variable speed. According to the datasheet,
@@ -276,6 +324,39 @@ void loop() {
    *  
    */
 }
+
+void displayCalibMessage1() {
+#ifdef PRINT_VIA_SERIAL
+    Serial.print("??? CALIBRATION ???"); Serial.println();
+    Serial.print("If you want calibration, release CALIBRATIONPIN now, else switch off"); Serial.println();
+#endif
+    display.clear();
+    display.setFont(ArialMT_Plain_16);
+    sprintf(puf,"CALIBRATION ??"); 
+    display.drawString(0,0,puf); 
+    display.setFont(ArialMT_Plain_10);
+    sprintf(puf,"Calibration: release pin");
+    display.drawString(0,40,puf);
+    sprintf(puf,"Otherwise switch off");
+    display.drawString(0,52,puf);
+    display.display();
+}
+
+void displayCalibMessage2() {
+#ifdef PRINT_VIA_SERIAL
+    Serial.print("*** CALIBRATING ***"); Serial.println();
+    Serial.print("Please wait"); Serial.println();
+#endif
+    display.clear();
+    display.setFont(ArialMT_Plain_16);
+    sprintf(puf,"** CALIBRATING **"); 
+    display.drawString(0,0,puf); 
+    display.setFont(ArialMT_Plain_10);
+    sprintf(puf,"Calibration ongoing, wait 15s");
+    display.drawString(0,40,puf);
+    display.display();
+}
+
 
 void displayCO2(int CO2, int TEMP, int HYG, int pm1, int pm25, int pm10) {
 #ifdef PRINT_VIA_SERIAL
