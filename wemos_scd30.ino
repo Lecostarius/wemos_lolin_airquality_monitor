@@ -189,6 +189,7 @@ SoftWire swi;
 int pm1=0, pm25=0, pm10=0;
 int CO2, TEMP, HYG;
 int displayType=0, displayCtr=0;
+int cycle = 0; // cyclic counter controlling on/off of the dust sensor, averaging of values etc
 char puf[128];
 uint8_t rxbuffer[34];
 
@@ -243,14 +244,25 @@ void loop() {
   int i;
   float concentrationNH3, concentrationCO, concentrationNO2, concentrationAlc;
 
+  cycle = cycle + 1; if (cycle > 100) cycle = 0;
+  
+  // switch on dust sensor, or switch it off:
+  if (cycle < 50) { 
+    digitalWrite(PMS7003PIN, HIGH);
+  } else {
+    digitalWrite(PMS7003PIN, LOW);
+  }
+  
   // *** PMS7003 fine dust sensor ***
   if (readPMS7003(rxbuffer) == 32) {
     if (rxbuffer[0] == 66 && rxbuffer[1] == 77) {
       // 0x6677 is a magic string the PMS7003 sends. We use it to verify that this is indeed data
       //  from the sensor and that it is valid.
-      pm1 = rxbuffer[10] * 256 + rxbuffer[11];
-      pm25 = rxbuffer[12] * 256 + rxbuffer[13];
-      pm10 = rxbuffer[14] * 256 + rxbuffer[15];
+      if (cycle > 25) {
+        pm1 = rxbuffer[10] * 256 + rxbuffer[11];
+        pm25 = rxbuffer[12] * 256 + rxbuffer[13];
+        pm10 = rxbuffer[14] * 256 + rxbuffer[15];
+      }
     }
   }
 
@@ -293,7 +305,7 @@ void loop() {
       delay(100); // wait for pin release, forever
     }
     displayCalibMessage2();
-    //mics.doCalibrate();
+    mics.doCalibrate();
     delay(8000); // wait 8 seconds
     digitalWrite(BUZZERPIN,HIGH); delay(200); digitalWrite(BUZZERPIN,LOW);
     delay(200);
