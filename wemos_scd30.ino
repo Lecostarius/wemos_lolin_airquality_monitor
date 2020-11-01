@@ -150,6 +150,8 @@
 // print sensor results and diagnostics also over Serial?
 #define PRINT_VIA_SERIAL 1
 
+#define WIFIMODE 1    // 0 - no WiFi, 1 - device is its own AP, 2 - device connects to existing WLAN
+
 // for the PMS7003:
 #define RX_PIN 25                                         // Rx pin which the PMS7003 Tx pin is attached to
 #define TX_PIN 0                                          // not used by us, we only receive
@@ -176,7 +178,7 @@
 #define WARNLEVEL2 7   // ppm CO if active over a long time
 
 // if you #define it, it will print info via Serial
-#undef PRINT_VIA_SERIAL 
+//#undef PRINT_VIA_SERIAL 
 
 // ************************************
 // #include section
@@ -194,7 +196,7 @@
 // ************************************
 int pm1=0, pm25=0, pm10=0;
 int CO2, TEMP, HYG;
-float concentrationNH3, concentrationCO, concentrationNO2, concentrationAlc;
+float cCO, cNO2;
 int displayType=0, displayCtr=0;
 int cycle = 0; // cyclic counter controlling on/off of the dust sensor, averaging of values etc
 uint32_t gcycle = 0; // global cycle counter, counts time since start
@@ -203,12 +205,18 @@ char puf[128];
 uint8_t rxbuffer[34];
 // webserver stuff:
 // SSID & Password
-const char* ssid = "ESP32";  // Enter your SSID here
-const char* password = "123456789";  //Enter your Password here
-// IP Address details
+const char* ssid = "ESP32";               // name of the WLAN the ESP32 itself will create in WIFIMODE 1
+const char* password = NULL;              // password of the ESP32s WLAN
+int         channel  = 3;
+
+
+
+// IP Address details for AP mode 
+#if WIFIMODE == 1
 IPAddress local_ip(192, 168, 3, 1);
 IPAddress gateway(192, 168, 3, 1);
 IPAddress subnet(255, 255, 255, 0);
+#endif
 
 // **************************************
 // Create global objects
@@ -219,7 +227,12 @@ SCD30 airSensor;              // the constructor does not yet talk to the device
 SSD1306 display(0x3c, 5, 4);  // on the Wemos Lolin board, the OLED is connected via I2C using pins 4 (SCL) and 5 (SDA).
 Mics6814 mics;                // the library knows the I2C adress 0x04 of the Seeed breakout board. This constructor does not yet
                               // talk with the device. The device is adressed using the begin() method.
+#if WIFIMODE == 1
 WebServer server(80);  // Object of WebServer(HTTP port, 80 is default)
+#endif
+#if WIFIMODE == 2
+WiFiServer wlanserver(80);
+#endif
 
 void setup() {
   // Serial is used for communication with the host PC over USB, mostly for diagnosis and debugging
@@ -239,8 +252,14 @@ void setup() {
   display.setFont(ArialMT_Plain_16);                      // 10, 16, 24 exist
   display.drawString(10,10,"(c) Lecostarius");
   display.setFont(ArialMT_Plain_10); 
+#if WIFIMODE == 1
   display.drawString(0,30,"WiFi: 'ESP32'");
   display.drawString(0,40,"IP  : 192.168.3.1");
+#endif
+#if WIFIMODE == 2
+  sprintf(puf,"Connecting to %s", wlanssid);
+  display.drawString(0,30,puf);
+#endif
   display.display();
 
   // set up the second I2C interface, using pins SDA_PIN, SCL_PIN and a bit-banging library
@@ -270,10 +289,28 @@ void setup() {
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
 
   // *** set up sequence for the WiFi ***
-  WiFi.softAP(ssid, password);
+#if WIFIMODE == 1
+  WiFi.softAP(ssid, password, channel); // bool softAP(const char* ssid, const char* passphrase = NULL, int channel = 1, int ssid_hidden = 0, int max_connection = 4);
   WiFi.softAPConfig(local_ip, gateway, subnet);
   server.on("/", handle_root);
   server.begin();
+#endif
+#if WIFIMODE == 2
+  WiFi.begin(wlanssid, wlanpassword);
+  delay(3500);
+  if (WiFi.status() == WL_CONNECTED) {
+    display.drawString(0,50,"connected");
+    display.display();
+#ifdef PRINT_VIA_SERIAL
+    Serial.println("Connected.");
+    Serial.println(WiFi.localIP());
+#endif
+    delay(1500);
+  }
+  wlanserver.begin();
+#endif
+  
+#if WIFIMODE == 1
  #ifdef PRINT_VIA_SERIAL
   Serial.print("HTTP server started. IP is ");
   Serial.println(local_ip);
@@ -281,13 +318,15 @@ void setup() {
   Serial.println(password);
  #endif
   delay(100);
-  
+#endif
 }
+
+
 
 void loop() {
   int i;
   
-
+  float concentrationNH3, concentrationCO, concentrationNO2, concentrationAlc;
   cycle  = cycle + 1; if (cycle > 100) cycle = 0;
   gcycle = gcycle + 1;
   
@@ -321,16 +360,16 @@ void loop() {
 
   // *** MiCS6814 chemical sensor ***
   concentrationNH3 = mics.measure_NH3();
-  concentrationCO  = mics.measure_CO();
-  concentrationNO2 = mics.measure_NO2();
+  concentrationCO  = mics.measure_CO(); cCO = concentrationCO;
+  concentrationNO2 = mics.measure_NO2(); cNO2 = concentrationNO2;
   concentrationAlc = mics.measure_C2H5OH();
   
- #ifdef PRINT_VIA_SERIAL
+#ifdef PRINT_VIA_SERIAL
   Serial.print("The concentration of NH3 is [ppm]"); Serial.println(concentrationNH3);
   Serial.print("The concentration of NO2 is [ppm]"); Serial.println(concentrationNO2);
   Serial.print("The concentration of CO is [ppm]"); Serial.println(concentrationCO);
   Serial.print("The concentration of Alcohol is [ppm]"); Serial.println(concentrationAlc);
- #endif
+#endif
   
   // in the first minute, do not look at CO concentration, sensor is still heating
   // should be 10 minutes, really
@@ -386,8 +425,16 @@ void loop() {
   }
 
   // Webserver
+#if WIFIMODE == 1
   server.handleClient();
+#endif
+#if WIFIMODE == 2
+  WiFiClient client = wlanserver.available();
+  if (client) {
 
+    handle_connection(client);
+  }
+#endif
   
   delay(500); // all our sensors are slow. No point in reading them too often.
   /* 
@@ -405,24 +452,9 @@ void loop() {
    */
 }
 
-
-// HTML & CSS contents which display on web server
-String HTML = "<!DOCTYPE html>\
-<html>\
-<body>\
-<h1>My First Web Server with ESP32 - AP Mode &#128522;</h1>\
-</body>\
-</html>";
-
-// Handle root url (/)
-void handle_root() {
-  String content = "<!DOCTYPE html>\
-<html>\
-<head><meta http-equiv=\"refresh\" content=\"2\" ></head>\
-<body>\
-<h1>Luftqualit&auml;tsmonitor</h1>\
-<br>\
-<h2>CO2: ";
+#if WIFIMODE > 0
+String computeResponse() {
+ String content = "<h1>Luftqualit&auml;tsmonitor</h1><br><h2>CO2: ";
   content+=CO2;
   content += "</h2><br><h2>PM10 : ";
   content += pm10;
@@ -431,21 +463,74 @@ void handle_root() {
   content += "</h2><br><h2>PM1  : ";
   content += pm1;
   content += "</h2><br>";
-  if (concentrationCO > 5) {
+  if (cCO > 5) {
     content += "<h2><i>CO   : ";
-    content += concentrationCO;
+    content += cCO;
     content += "</i>";
   } else {
     content += "<h2>CO   : ";
-    content += concentrationCO;
+    content += cCO;
   }
   
   content += "</h2><br><h2>NO2  : ";
-  content += concentrationNO2;
-  content += "</body></html>";
-  server.send(200, "text/html", content);
-} 
+  content += cNO2;
+  return(content);
+}
+#endif
 
+#if WIFIMODE == 1
+// Handle root url (/). Needed for WIFIMODE 1 where we are AP.
+void handle_root() {
+  String ctr = "<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"2\" ></head><body>";
+  ctr += computeResponse();
+  ctr += "</body></html>";
+  server.send(200, "text/html", ctr);
+} 
+#endif
+
+#if WIFIMODE == 2
+void handle_connection(WiFiClient& client) {
+  String currentLine = "";
+  unsigned long currentTime = millis();
+#ifdef PRINT_VIA_SERIAL
+    Serial.println("Connection received");
+#endif
+  while ( client.connected() && ((millis() - currentTime) < 2000) ) { 
+    if (client.available()) {
+      char c = client.read();
+#ifdef PRINT_VIA_SERIAL 
+      Serial.print(c);
+#endif
+      if (c == '\n') {
+        if (currentLine.length() == 0) {
+          // end of the request.
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-type:text/html");
+          client.println("Connection: close");
+          client.println();
+          String ctr = "<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"2\" ><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head>";
+          ctr += computeResponse();
+          client.println(ctr);
+          client.println("");
+          client.println("</html>");
+          delay(1);
+          client.stop();
+          
+          break;
+        } else {
+          
+          currentLine = ""; // got a CR, start with the next line  
+          
+        }
+      } else {
+        if (c != '\r') currentLine += c;
+      } // if c == '\n'
+    } // if client.available()
+    
+  } // while
+  
+}
+#endif
 
 void displayCalibMessage1() {
 #ifdef PRINT_VIA_SERIAL
