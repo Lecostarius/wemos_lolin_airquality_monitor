@@ -169,7 +169,14 @@
 // calibration input pin: if this is pulled low, calibrate the MiCS6814:
 #define CALIBRATIONPIN 26 
 
+// DECAY is between 0 and 0.999, and is the forgetting factor for the CO concentration
+// integrator. The higher, the longer the integration constant. 
+#define DECAY 0.99
+#define WARNLEVEL1 100 // ppm CO when we warn immediately
+#define WARNLEVEL2 7   // ppm CO if active over a long time
 
+// if you #define it, it will print info via Serial
+#undef PRINT_VIA_SERIAL 
 
 #include <Arduino.h>
 
@@ -190,6 +197,8 @@ int pm1=0, pm25=0, pm10=0;
 int CO2, TEMP, HYG;
 int displayType=0, displayCtr=0;
 int cycle = 0; // cyclic counter controlling on/off of the dust sensor, averaging of values etc
+uint32_t gcycle = 0; // global cycle counter, counts time since start
+float co_integral = 0.0; // integrated CO concentration over time
 char puf[128];
 uint8_t rxbuffer[34];
 
@@ -244,7 +253,8 @@ void loop() {
   int i;
   float concentrationNH3, concentrationCO, concentrationNO2, concentrationAlc;
 
-  cycle = cycle + 1; if (cycle > 100) cycle = 0;
+  cycle  = cycle + 1; if (cycle > 100) cycle = 0;
+  gcycle = gcycle + 1;
   
   // switch on dust sensor, or switch it off:
   if (cycle < 50) { 
@@ -279,11 +289,30 @@ void loop() {
   concentrationCO  = mics.measure_CO();
   concentrationNO2 = mics.measure_NO2();
   concentrationAlc = mics.measure_C2H5OH();
+  
+ #ifdef PRINT_VIA_SERIAL
   Serial.print("The concentration of NH3 is [ppm]"); Serial.println(concentrationNH3);
   Serial.print("The concentration of NO2 is [ppm]"); Serial.println(concentrationNO2);
   Serial.print("The concentration of CO is [ppm]"); Serial.println(concentrationCO);
   Serial.print("The concentration of Alcohol is [ppm]"); Serial.println(concentrationAlc);
-
+ #endif
+  
+  // in the first minute, do not look at CO concentration, sensor is still heating
+  // should be 10 minutes, really
+  if (gcycle > 120) {
+    co_integral += concentrationCO;
+    co_integral = co_integral * DECAY;
+#ifdef PRINT_VIA_SERIAL
+    Serial.print("co_integral, modified integral, conc: "); Serial.print(co_integral); Serial.print(", "); Serial.print(co_integral*(1-DECAY)); Serial.print(", "); 
+    Serial.println(concentrationCO);
+#endif  
+    if (concentrationCO > WARNLEVEL1 || co_integral*(1-DECAY) > WARNLEVEL2) {
+      co_integral = co_integral * 0.95; // decay a bit - we issued a warning. The constant is somewhat arbitrary here.
+      digitalWrite(BUZZERPIN, HIGH);
+      delay(500); // beep a little
+      digitalWrite(BUZZERPIN, LOW);
+    }
+  }
   // done reading, display results
   displayCtr++;
   if (displayCtr > 5) {
@@ -402,12 +431,12 @@ void displayCO2(int CO2, int TEMP, int HYG, int pm1, int pm25, int pm10) {
     x = display.getStringWidth("µg/m  PM");
     display.drawString(70+x,33,"10");
     
-    display.setFont(ArialMT_Plain_16);    
+    display.setFont(ArialMT_Plain_10);    
     //sprintf(puf,"PM1/2.5/10:%d/%d/%d", pm1, pm25,pm10);
     //display.drawString(1,40,puf);
     //display.setFont(ArialMT_Plain_16);
 
-    sprintf(puf,"%d %%relF, %d °C", HYG, TEMP);
+    sprintf(puf,"%d pm1, %d pm 2.5, %d %%relF", pm1, pm25, HYG);
     display.drawString(1,48,puf);
     display.display();
     
