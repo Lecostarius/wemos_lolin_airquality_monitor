@@ -178,29 +178,48 @@
 // if you #define it, it will print info via Serial
 #undef PRINT_VIA_SERIAL 
 
+// ************************************
+// #include section
+// ************************************
 #include <Arduino.h>
-
 #define NO_GLOBAL_SOFTWIRE
 #include "paulvha_SCD30.h"  // this includes SoftWire.h but with NO_GLOBAL_SOFTWIRE will not create a "Wire" object
 #include "SSD1306.h"        // this will include Wire.h, and create a Wire object which is used to communicate with the display.
 #include "Mics6814.h"
+#include <WiFi.h>
+#include <WebServer.h>
 
-SCD30 airSensor;              // the constructor does not yet talk to the device. This happens during begin().
-SSD1306 display(0x3c, 5, 4);  // on the Wemos Lolin board, the OLED is connected via I2C using pins 4 (SCL) and 5 (SDA).
-Mics6814 mics;                // the library knows the I2C adress 0x04 of the Seeed breakout board. This constructor does not yet
-                              // talk with the device. The device is adressed using the begin() method.
-
-HardwareSerial mySerial(1);
-SoftWire swi;
-
+// ************************************
+// Global variables
+// ************************************
 int pm1=0, pm25=0, pm10=0;
 int CO2, TEMP, HYG;
+float concentrationNH3, concentrationCO, concentrationNO2, concentrationAlc;
 int displayType=0, displayCtr=0;
 int cycle = 0; // cyclic counter controlling on/off of the dust sensor, averaging of values etc
 uint32_t gcycle = 0; // global cycle counter, counts time since start
 float co_integral = 0.0; // integrated CO concentration over time
 char puf[128];
 uint8_t rxbuffer[34];
+// webserver stuff:
+// SSID & Password
+const char* ssid = "ESP32";  // Enter your SSID here
+const char* password = "123456789";  //Enter your Password here
+// IP Address details
+IPAddress local_ip(192, 168, 3, 1);
+IPAddress gateway(192, 168, 3, 1);
+IPAddress subnet(255, 255, 255, 0);
+
+// **************************************
+// Create global objects
+// **************************************
+HardwareSerial mySerial(1);
+SoftWire swi;
+SCD30 airSensor;              // the constructor does not yet talk to the device. This happens during begin().
+SSD1306 display(0x3c, 5, 4);  // on the Wemos Lolin board, the OLED is connected via I2C using pins 4 (SCL) and 5 (SDA).
+Mics6814 mics;                // the library knows the I2C adress 0x04 of the Seeed breakout board. This constructor does not yet
+                              // talk with the device. The device is adressed using the begin() method.
+WebServer server(80);  // Object of WebServer(HTTP port, 80 is default)
 
 void setup() {
   // Serial is used for communication with the host PC over USB, mostly for diagnosis and debugging
@@ -219,6 +238,9 @@ void setup() {
   display.clear();
   display.setFont(ArialMT_Plain_16);                      // 10, 16, 24 exist
   display.drawString(10,10,"(c) Lecostarius");
+  display.setFont(ArialMT_Plain_10); 
+  display.drawString(0,30,"WiFi: 'ESP32'");
+  display.drawString(0,40,"IP  : 192.168.3.1");
   display.display();
 
   // set up the second I2C interface, using pins SDA_PIN, SCL_PIN and a bit-banging library
@@ -246,12 +268,25 @@ void setup() {
   // not really doing anything - this device just sends data over serial, so lets start the serial
   // port that receives the data
   mySerial.begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
+
+  // *** set up sequence for the WiFi ***
+  WiFi.softAP(ssid, password);
+  WiFi.softAPConfig(local_ip, gateway, subnet);
+  server.on("/", handle_root);
+  server.begin();
+ #ifdef PRINT_VIA_SERIAL
+  Serial.print("HTTP server started. IP is ");
+  Serial.println(local_ip);
+  Serial.print("Password: ");
+  Serial.println(password);
+ #endif
+  delay(100);
   
 }
 
 void loop() {
   int i;
-  float concentrationNH3, concentrationCO, concentrationNO2, concentrationAlc;
+  
 
   cycle  = cycle + 1; if (cycle > 100) cycle = 0;
   gcycle = gcycle + 1;
@@ -349,6 +384,10 @@ void loop() {
   } else {
     //digitalWrite(BUZZERPIN, LOW);
   }
+
+  // Webserver
+  server.handleClient();
+
   
   delay(500); // all our sensors are slow. No point in reading them too often.
   /* 
@@ -365,6 +404,48 @@ void loop() {
    *  
    */
 }
+
+
+// HTML & CSS contents which display on web server
+String HTML = "<!DOCTYPE html>\
+<html>\
+<body>\
+<h1>My First Web Server with ESP32 - AP Mode &#128522;</h1>\
+</body>\
+</html>";
+
+// Handle root url (/)
+void handle_root() {
+  String content = "<!DOCTYPE html>\
+<html>\
+<head><meta http-equiv=\"refresh\" content=\"2\" ></head>\
+<body>\
+<h1>Luftqualit&auml;tsmonitor</h1>\
+<br>\
+<h2>CO2: ";
+  content+=CO2;
+  content += "</h2><br><h2>PM10 : ";
+  content += pm10;
+  content += "</h2><br><h2>PM2.5: ";
+  content += pm25;
+  content += "</h2><br><h2>PM1  : ";
+  content += pm1;
+  content += "</h2><br>";
+  if (concentrationCO > 5) {
+    content += "<h2><i>CO   : ";
+    content += concentrationCO;
+    content += "</i>";
+  } else {
+    content += "<h2>CO   : ";
+    content += concentrationCO;
+  }
+  
+  content += "</h2><br><h2>NO2  : ";
+  content += concentrationNO2;
+  content += "</body></html>";
+  server.send(200, "text/html", content);
+} 
+
 
 void displayCalibMessage1() {
 #ifdef PRINT_VIA_SERIAL
